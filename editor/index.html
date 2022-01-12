@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <title>Nakisa - BuddyCode</title>
+    <style type="text/css" media="screen">
+        #editor {
+            position: absolute;
+            top: 0;
+            right: 0;
+            bottom: 0;
+            left: 0;
+        }
+    </style>
+</head>
+
+<body>
+
+    <div id="editor"></div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/ace/1.4.12/ace.min.js"
+        integrity="sha512-GoORoNnxst42zE3rYPj4bNBm0Q6ZRXKNH2D9nEmNvVF/z24ywVnijAWVi/09iBiVDQVf3UlZHpzhAJIdd9BXqw=="
+        crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/ace/1.4.12/mode-python.min.js"
+        integrity="sha512-2Ke4vMGrMfYRM55pT1aA5bw7Pl82Sc7K5Hg8XZYZu+EQrb0AO1mNYTagwZm+MFVAImYS9Mlnm73zcgc01wPXxA=="
+        crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/ace/1.4.12/theme-monokai.min.js"
+        integrity="sha512-S4i/WUGRs22+8rjUVu4kBjfNuBNp8GVsgcK2lbaFdws4q6TF3Nd00LxqnHhuxS9iVDfNcUh0h6OxFUMP5DBD+g=="
+        crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/diff-match-patch/1.0.5/index.min.js"
+        integrity="sha512-s/r2YIRA8VD7KT0c9uJqKrZFrNFgKlOPeLyVXp7noa6+F8vw5LMvR+hxteawjCpp6+5A4nTYoWtwLcXEJW1YzA=="
+        crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+
+
+    <script type="module">
+        import { v4 as uuidv4 } from 'https://jspm.dev/uuid';
+        //region utility calsses
+        class SynchronizedDocument {
+            constructor(doc_id = null, uid = null, initial_doc = '') {
+                this.doc_id = doc_id || uuidv4();
+                this.uid = uid || uuidv4();
+                this.initial_doc = initial_doc;
+                this._shadow = initial_doc;
+                this._text = initial_doc;
+                this.shadow_version = 0
+                this.patch = null
+            }
+
+            update_text(new_text) {
+                this._text = new_text
+            }
+
+            reset_text(new_text) {
+                this._text = new_text
+                this._shadow = new_text
+                this.patch = null
+            }
+
+            apply_patch(patch) {
+                patch = dmp.patch_fromText(patch)
+                this._shadow = dmp.patch_apply(patch, this._shadow)[0]
+                this.shadow_version += 1
+                this._text = dmp.patch_apply(patch, this._text)[0]
+            }
+
+            get_patch() {
+                this.patch = dmp.patch_make(this._shadow, this._text)
+                this._shadow = this._text
+
+                return dmp.patch_toText(this.patch)
+            }
+
+
+        }
+
+        class APIConnector {
+            constructor() {
+                self.endpoint = "https://buddycode.leasing-sandbox.net:9000/?"
+            }
+
+            async get_document(doc_id_p) {
+                let params = new URLSearchParams({
+                    doc_id: doc_id_p,
+                })
+                let response = await fetch(self.endpoint + params, {
+                    method: 'GET',
+                    // mode: 'no-cors',
+                });
+                let responseText = await response.text();
+
+                return responseText
+            }
+
+            async post_update(doc_id_p, uid_p, patch_p) {
+                let params = new URLSearchParams({
+                    doc_id: doc_id_p,
+                })
+                let response = await fetch(self.endpoint + params, {
+                    method: 'POST',
+                    headers: {
+                        // 'Accept': 'application/json',
+                        'Content-Type': 'application/json'
+                    },
+                    // mode: 'no-cors',
+                    body: JSON.stringify({ uid: uid_p, patch: patch_p })
+                });
+                let responseText = await response.text();
+
+                return responseText
+            }
+        }
+        //endregion
+
+        //region global objects
+        let editor = ace.edit("editor");
+        editor.setTheme("ace/theme/monokai");
+        editor.session.setMode("ace/mode/python");
+        editor.setShowPrintMargin(false)
+
+        let dmp = new diff_match_patch();
+        let api = new APIConnector()
+        //endregion
+
+        //region init url
+        var urlParams = new URLSearchParams(window.location.search);
+        if (urlParams.has('doc_id')) {
+            console.log('got doc_id: ' + urlParams.get('doc_id'))
+            var doc_id = urlParams.get('doc_id')
+        }
+        else {
+            var doc_id = uuidv4()
+        }
+
+        urlParams.set('doc_id', doc_id);
+        window.history.replaceState(null, null, '?' + urlParams)
+        //endregion
+
+        //region init SynchronizedDocument
+        let sync_doc = new SynchronizedDocument(doc_id)
+
+        var initial_doc = api.get_document(sync_doc.doc_id)
+        initial_doc.then(function (text) {
+            sync_doc.reset_text(text)
+            editor.setValue(sync_doc._text, 1)
+        })
+        //endregion
+
+        function sync() {
+            // post patch to api endpoint and apply response to local document
+            // conserve cursor location in local document
+            sync_doc.update_text(editor.getValue())
+            var res = api.post_update(sync_doc.doc_id, sync_doc.uid, sync_doc.get_patch())
+            res.then(function (patch) {
+                console.log('before sync:' + sync_doc._text)
+                console.log('patch: ' + patch)
+                sync_doc.apply_patch(patch)
+                console.log('after sync:' + sync_doc._text)
+
+                // var cur_position = editor.getCursorPosition()
+                var cur_position = editor.getSelectionRange()
+                editor.setValue(sync_doc._text, -1)
+                editor.selection.setSelectionRange(cur_position, false)
+                // editor.moveCursorToPosition(cur_position)
+            })
+        }
+
+        var intervalId = setInterval(function () {
+            console.log('trigerring sync')
+            sync()
+        }, 1500);
+    </script>
+</body>
+
+</html>

@@ -1,0 +1,1 @@
+Editable version of design doc available at: [link](https://nakisainc-my.sharepoint.com/:w:/g/personal/lgoldstien_nakisa_com/EXBkzl1_pcZPnnLOlpCzzrwBcEsDZYQjYTWBs8icrUiq3Q?e=wOdRjd)
